@@ -1,0 +1,1091 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Sound Switcher Pro v2.1</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <!-- JSZip for Backup/Restore -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700&display=swap');
+        
+        body { font-family: 'Noto Sans JP', sans-serif; background-color: #121212; color: #e5e5e5; overflow: hidden; }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #1e1e1e; }
+        ::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #666; }
+        
+        .glass-panel {
+            background: rgba(30, 30, 30, 0.95);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        /* Switch Button Styles */
+        .switch-btn {
+            transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+            background: linear-gradient(145deg, #2a2a2a, #222);
+            box-shadow: 5px 5px 10px #151515, -5px -5px 10px #333;
+        }
+        .switch-btn:active {
+            transform: translateY(2px);
+            box-shadow: inset 5px 5px 10px #151515, inset -5px -5px 10px #333;
+        }
+        .switch-btn.active {
+            background: linear-gradient(145deg, #1e3a29, #162e20);
+            border-color: #22c55e;
+            box-shadow: inset 0 0 15px rgba(34, 197, 94, 0.3);
+        }
+        .switch-led {
+            width: 8px; height: 8px; border-radius: 50%;
+            background-color: #444;
+            box-shadow: inset 0 1px 2px rgba(0,0,0,0.5);
+            transition: all 0.2s;
+            border: 1px solid #222;
+        }
+        .switch-btn.active .switch-led {
+            background-color: #4ade80;
+            box-shadow: 0 0 8px #4ade80, 0 0 12px #4ade80;
+            border-color: #86efac;
+        }
+
+        /* Mobile Adjustments */
+        .mobile-mode .sidebar { display: none; }
+        .mobile-mode .main-view { width: 100%; }
+        .mobile-mode.show-sidebar .sidebar { display: flex; position: absolute; z-index: 50; width: 100%; height: 100%; }
+        .mobile-mode.show-sidebar .main-view { display: none; }
+
+        .line-tab { opacity: 0.6; position: relative; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;}
+        .line-tab.active { font-weight: bold; opacity: 1; }
+        .line-tab.active::after {
+            content: ''; position: absolute; bottom: 0; left: 0; width: 100%; height: 3px;
+            background: currentColor; box-shadow: 0 -2px 10px currentColor;
+        }
+        
+        /* Hide file input */
+        input[type="file"] { display: none; }
+
+        /* Animation */
+        @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+        .animate-fade-in { animation: fade-in 0.3s ease-out; }
+        @keyframes scale-in { from { transform: scale(0.95); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+        .animate-scale-in { animation: scale-in 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+    </style>
+</head>
+<body class="h-screen flex flex-col text-sm md:text-base selection:bg-green-900 selection:text-white">
+
+    <!-- App Container -->
+    <div id="app-root" class="flex-1 flex overflow-hidden relative">
+        
+        <!-- Sidebar (Route List) -->
+        <aside id="sidebar" class="sidebar w-full md:w-72 bg-[#181818] border-r border-[#333] flex flex-col transition-all duration-300 z-40">
+            <div class="h-14 bg-[#202020] border-b border-[#333] flex items-center justify-between px-4 shrink-0">
+                <h1 class="font-bold text-gray-200 tracking-wider"><i class="fas fa-train mr-2 text-green-500"></i>Sound Switcher</h1>
+                <div class="flex gap-1">
+                    <button onclick="app.ui.showNewFolderModal()" class="text-gray-400 hover:text-white p-2 hover:bg-[#333] rounded transition" title="新規路線作成"><i class="fas fa-plus"></i></button>
+                    <!-- Import File Button -->
+                    <label class="text-gray-400 hover:text-white p-2 hover:bg-[#333] rounded transition cursor-pointer" title="路線ファイルをインポート">
+                        <i class="fas fa-file-import"></i>
+                        <input type="file" id="single-import-input" accept=".txt" onchange="app.io.importSingleFile(this)">
+                    </label>
+                    <button onclick="app.ui.toggleSettings()" class="text-gray-400 hover:text-white p-2 hover:bg-[#333] rounded transition" title="設定"><i class="fas fa-cog"></i></button>
+                </div>
+            </div>
+            
+            <div class="p-2 border-b border-[#333] bg-[#222]">
+                <button onclick="app.ui.showAiModal()" class="w-full py-2 bg-gradient-to-r from-indigo-800 to-blue-800 hover:from-indigo-700 hover:to-blue-700 text-white rounded text-xs font-bold shadow transition border border-indigo-600/50">
+                    <i class="fas fa-magic mr-1"></i> AI路線自動生成
+                </button>
+            </div>
+
+            <div id="folder-list" class="flex-1 overflow-y-auto p-2 space-y-1">
+                <!-- Folders injected here -->
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main id="main-view" class="main-view flex-1 flex flex-col bg-[#121212] relative w-full transition-all">
+            
+            <!-- Header / Navigation -->
+            <div class="h-14 bg-[#1e1e1e] border-b border-[#333] flex items-center justify-between px-4 shrink-0 shadow-lg z-30">
+                <div class="flex items-center gap-3 overflow-hidden flex-1">
+                    <button id="mobile-menu-btn" onclick="app.ui.toggleSidebar()" class="md:hidden text-gray-400 mr-2 hover:text-white">
+                        <i class="fas fa-bars text-xl"></i>
+                    </button>
+                    <div id="line-color-indicator" class="w-1.5 h-6 rounded-full bg-gray-600 shadow-[0_0_10px_currentColor] transition-colors duration-500"></div>
+                    <h2 id="current-folder-name" class="text-lg font-bold text-white truncate">路線未選択</h2>
+                </div>
+                <div class="flex gap-2">
+                    <button onclick="app.io.showImportExport()" class="bg-[#333] hover:bg-[#444] text-gray-300 px-3 py-1.5 rounded text-xs border border-[#444] transition flex items-center gap-2">
+                        <i class="fas fa-code"></i> <span class="hidden sm:inline">テキスト編集</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Track Switcher (Tabs) -->
+            <div id="track-switcher" class="hidden bg-[#181818] border-b border-[#333] flex overflow-x-auto">
+                <!-- Tabs injected here -->
+            </div>
+
+            <!-- Station List Container -->
+            <div id="station-scroll-area" class="flex-1 overflow-y-auto p-2 md:p-6 pb-32 scroll-smooth">
+                <div id="station-container" class="space-y-4 max-w-4xl mx-auto">
+                    <!-- Stations injected here -->
+                    <div class="flex flex-col items-center justify-center text-gray-600 mt-20 gap-4">
+                        <i class="fas fa-subway text-6xl opacity-20"></i>
+                        <p>左のメニューから路線を選択するか、新規作成してください</p>
+                    </div>
+                </div>
+                
+                <!-- Add Station Button (Bottom of list) -->
+                <div id="add-station-btn-area" class="hidden mt-8 mb-12 text-center">
+                     <button onclick="app.handlers.addStation()" class="group bg-[#1a1a1a] hover:bg-[#252525] text-gray-400 hover:text-green-400 px-8 py-3 rounded-full border border-[#333] hover:border-green-500/50 transition-all shadow-lg active:scale-95">
+                        <i class="fas fa-plus mr-2 group-hover:rotate-90 transition-transform"></i>駅を追加
+                     </button>
+                </div>
+            </div>
+
+        </main>
+    </div>
+
+    <!-- Modals -->
+
+    <!-- New Folder Modal -->
+    <div id="new-folder-modal" class="fixed inset-0 bg-black/80 hidden z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+        <div class="glass-panel w-full max-w-sm rounded-xl p-6 shadow-2xl animate-scale-in">
+            <h3 class="text-lg font-bold mb-4 text-white"><i class="fas fa-plus-circle text-green-500 mr-2"></i>新規路線作成</h3>
+            
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-gray-400 mb-1">路線名</label>
+                    <input type="text" id="new-folder-name" class="w-full bg-[#111] border border-[#444] rounded p-2 text-white focus:border-green-500 focus:outline-none" placeholder="例: 東西線">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-400 mb-1">ラインカラー</label>
+                    <div class="flex gap-2">
+                        <input type="color" id="new-folder-color" class="h-10 w-16 bg-transparent cursor-pointer rounded border border-[#444]" value="#00a1de">
+                        <input type="text" id="new-folder-color-text" class="flex-1 bg-[#111] border border-[#444] rounded p-2 text-white font-mono uppercase" value="#00a1de" onchange="document.getElementById('new-folder-color').value = this.value">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-400 mb-1">デフォルトIKST番号(下3桁)</label>
+                    <input type="text" id="new-folder-ikst" class="w-full bg-[#111] border border-[#444] rounded p-2 text-white font-mono" value="001" placeholder="001">
+                </div>
+            </div>
+
+            <div class="mt-6 flex justify-end gap-3">
+                <button onclick="document.getElementById('new-folder-modal').classList.add('hidden')" class="px-4 py-2 text-gray-400 hover:text-white transition">キャンセル</button>
+                <button onclick="app.handlers.createFolderFromModal()" class="px-6 py-2 bg-green-700 hover:bg-green-600 text-white rounded font-bold shadow transition">作成</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Import/Export Text Modal (TXT Viewer) -->
+    <div id="io-modal" class="fixed inset-0 bg-black/80 hidden z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+        <div class="glass-panel w-full max-w-3xl rounded-xl p-6 shadow-2xl flex flex-col max-h-[90vh] animate-fade-in">
+            <div class="flex justify-between items-center mb-4 border-b border-gray-700 pb-2">
+                <h3 class="text-lg font-bold text-white"><i class="fas fa-file-code text-green-500 mr-2"></i>テキスト編集 (TXT Viewer)</h3>
+                <button onclick="document.getElementById('io-modal').classList.add('hidden')" class="text-gray-500 hover:text-white"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="bg-blue-900/20 text-blue-200/80 text-xs p-2 rounded mb-2 border border-blue-700/30">
+                <i class="fas fa-info-circle mr-1"></i>
+                現在の路線の設定データです。編集して読み込むか、コピーしてバックアップとして保存できます。
+            </div>
+            <textarea id="io-textarea" class="w-full flex-1 bg-[#0a0a0a] border border-gray-700 rounded p-4 text-xs md:text-sm font-mono text-green-400 focus:outline-none focus:border-green-600 mb-4 min-h-[300px] leading-relaxed resize-none shadow-inner" spellcheck="false" placeholder="ここにテキストデータが表示されます"></textarea>
+            <div class="flex justify-end gap-3 shrink-0">
+                <button onclick="app.io.copyToClipboard()" class="px-5 py-2.5 bg-[#333] hover:bg-[#444] text-white rounded shadow transition border border-gray-600">
+                    <i class="fas fa-copy mr-2"></i>すべてコピー
+                </button>
+                <button onclick="app.io.importLineFromText()" class="px-5 py-2.5 bg-green-700 hover:bg-green-600 text-white rounded shadow transition font-bold">
+                    <i class="fas fa-save mr-2"></i>内容を適用 (読み込み)
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="fixed inset-0 bg-black/80 hidden z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+        <div class="glass-panel w-full max-w-md rounded-xl p-6 shadow-2xl animate-scale-in">
+            <h3 class="text-lg font-bold mb-6 flex items-center text-white"><i class="fas fa-sliders-h text-gray-400 mr-2"></i> 設定</h3>
+            
+            <div class="space-y-4">
+                <div>
+                    <label class="flex items-center justify-between cursor-pointer bg-[#222] p-4 rounded-lg border border-[#333] hover:border-[#555] transition">
+                        <span class="text-sm font-bold text-gray-200">スマホ向けレイアウト</span>
+                        <div class="relative inline-block w-10 mr-2 align-middle select-none">
+                            <input type="checkbox" id="mobile-mode-check" onchange="app.ui.toggleMobileMode(this.checked)" class="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 appearance-none cursor-pointer transition-transform duration-200 ease-in-out"/>
+                            <label for="mobile-mode-check" class="toggle-label block overflow-hidden h-5 rounded-full bg-gray-600 cursor-pointer"></label>
+                        </div>
+                    </label>
+                </div>
+
+                <div class="bg-[#222] p-4 rounded-lg border border-[#333]">
+                    <span class="block text-sm font-bold text-gray-200 mb-3">バックアップ / リストア</span>
+                    <div class="grid grid-cols-2 gap-2">
+                        <button onclick="app.io.exportAllZip()" class="py-2 bg-blue-900/40 hover:bg-blue-800 text-blue-200 border border-blue-800/50 rounded text-sm transition flex flex-col items-center justify-center gap-1">
+                            <i class="fas fa-file-archive text-lg"></i>
+                            <span>All Export (Zip)</span>
+                        </button>
+                        <label class="cursor-pointer py-2 bg-green-900/40 hover:bg-green-800 text-green-200 border border-green-800/50 rounded text-sm transition flex flex-col items-center justify-center gap-1">
+                            <i class="fas fa-file-upload text-lg"></i>
+                            <span>All Restore (Zip)</span>
+                            <input type="file" accept=".zip" onchange="app.io.importAllZip(this)">
+                        </label>
+                    </div>
+                </div>
+
+                <div class="pt-4 border-t border-[#333]">
+                    <label class="block text-xs font-bold text-blue-400 mb-2">Gemini API Key (AI生成用)</label>
+                    <input type="password" id="api-key-input" class="w-full bg-[#111] border border-[#333] rounded p-3 text-white text-sm focus:border-blue-500 focus:outline-none transition" placeholder="AI機能を使う場合のみ入力">
+                </div>
+            </div>
+
+            <div class="mt-8 flex justify-end">
+                <button onclick="app.ui.saveSettings()" class="px-6 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded transition">閉じる</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- AI Modal -->
+    <div id="ai-modal" class="fixed inset-0 bg-black/80 hidden z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+        <div class="glass-panel w-full max-w-md rounded-xl p-6 shadow-2xl animate-fade-in">
+            <h3 class="text-xl font-bold mb-2 flex items-center gap-2 text-white"><i class="fas fa-robot text-indigo-400"></i> AI 路線自動生成</h3>
+            <p class="text-xs text-gray-400 mb-6">路線名を入力すると、駅名と発車メロディをAIが推測して自動設定します。</p>
+            
+            <div class="mb-6 relative">
+                <i class="fas fa-subway absolute left-4 top-3.5 text-gray-500"></i>
+                <input type="text" id="ai-line-input" class="w-full bg-[#151515] border border-gray-600 rounded-lg p-3 pl-10 text-white focus:border-indigo-500 focus:outline-none transition shadow-inner" placeholder="例: 山手線, 京浜東北線">
+            </div>
+
+            <div id="ai-loading" class="hidden mb-6 text-center py-2 bg-[#1a1a1a] rounded-lg border border-indigo-900/50">
+                <i class="fas fa-circle-notch fa-spin text-indigo-500 text-2xl mb-2"></i>
+                <p class="text-xs text-indigo-300 animate-pulse">AIが路線データを構築中...</p>
+            </div>
+
+            <div class="flex justify-end gap-3">
+                <button onclick="document.getElementById('ai-modal').classList.add('hidden')" class="px-4 py-2 rounded text-gray-400 hover:text-white transition">キャンセル</button>
+                <button onclick="app.handlers.generateLineByAI()" class="px-6 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded font-bold shadow-lg shadow-indigo-900/20 transition transform active:scale-95">生成する</button>
+            </div>
+        </div>
+    </div>
+
+    <style>
+        /* Checkbox Toggle Styles */
+        .toggle-checkbox:checked { right: 0; border-color: #68D391; }
+        .toggle-checkbox:checked + .toggle-label { background-color: #68D391; }
+        .toggle-checkbox { right: 50%; } /* Unchecked state */
+    </style>
+
+    <script>
+        /**
+         * MASTER DATA
+         */
+        const DATA = {
+            jreh: { prefix: "jreh", name: "放送・ブザー", items: {} },
+            jres: { prefix: "jres", name: "接近メロディ", items: {} },
+            jrem: { prefix: "jrem", name: "発車メロディ", items: {} }
+        };
+
+        const jrehData = {
+            1: "ATOS接近チャイム", 2: "簡易接近放送(男性)", 3: "簡易接近放送(女性)", 
+            4: "男「ドアが閉まります」", 5: "女「ドアが閉まります」", 
+            6: "通過アナウンス(男性)", 7: "通過アナウンス(女性)", 
+            8: "発車指示ブザー", 9: "乗降終了ベル1", 10: "乗降終了ベル2",
+            11: "男「まもなく」", 12: "男「列車がまいります」", 
+            13: "男「危ないですから…」", 14: "女「まもなく」", 
+            15: "女「列車がまいります」", 16: "女「危ないですから…」",
+            17: "旭型女性 簡易接近", 18: "旭型男性 簡易接近", 
+            19: "旭型女性「ドアが…」", 20: "旭型男性「ドアが…」",
+            21: "ユニペックス型1", 22: "ユニペックス型2", 23: "ユニペックス型3", 
+            24: "京葉PRC型チャイム", 25: "東海道型A-a", 26: "東海道型A-b", 
+            27: "東海道型B-a", 28: "東海道型B-c", 29: "ユニペックス型4", 
+            30: "永楽型チャイム"
+        };
+        
+        const jresData = {
+            1: "接近メロディ1", 2: "接近メロディ2", 3: "接近メロディ3", 
+            4: "接近メロディ4", 5: "接近メロディ5", 6: "接近メロディ6",
+            7: "接近メロディ7", 8: "接近メロディ8", 9: "接近メロディ9", 
+            10: "接近メロディ10", 11: "接近メロディ11", 12: "接近メロディ12"
+        };
+
+        // Full melody list
+        const jremData = {
+            1: "あ 上野駅", 2: "airy", 3: "新たな季節", 4: "発車ベル1", 5: "発車ベル2",
+            6: "cappuccino", 7: "蝶々のように", 8: "Cielo Estrellado", 9: "第三の男VerE", 10: "第三の男VerG",
+            11: "第三の男VerH", 12: "Dance on", 13: "電車ごっこA", 14: "電車ごっこB", 15: "電車ごっこC",
+            16: "電車ごっこD", 17: "ドリーム・パーク", 18: "farewell", 19: "フラワーショップ", 20: "Gota Del Vient",
+            21: "花のほころび", 22: "原宿a", 23: "原宿b", 24: "春", 25: "春New Ver.",
+            26: "春風", 27: "ホリデイ", 28: "古いオルゴール", 29: "一番星見つけたA", 30: "一番星見つけたB",
+            31: "It's a small world", 32: "常磐3-1番", 33: "JR-SH1-1", 34: "JR-SH2-3", 35: "JR-SH3-3",
+            36: "JR-SH4-1", 37: "JR-SH5-1", 38: "JR-SH6-1", 39: "JR-SH7-1", 40: "JR-SH8",
+            41: "JR-SH9-3", 42: "瞬く街並み", 43: "海岸通り", 44: "キッズステーション", 45: "木々の目覚め",
+            46: "近郊17番", 47: "高原", 48: "恋の通勤列車", 49: "国分寺市の歌サビ", 50: "国分寺市の歌Aメロ",
+            51: "木もれ陽の散歩道", 52: "mellow time", 53: "メロディー", 54: "ML-24", 55: "ムーンストーン",
+            56: "夏色の時間", 57: "ナンバーワン野郎VerA", 58: "マイスターシンガー", 59: "小川のせせらぎ", 60: "おはよう",
+            61: "SF10-38", 62: "さくらさくらVerA", 63: "see you again", 64: "線路は続くよB", 65: "線路は続くよC",
+            66: "線路の彼方", 67: "せせらぎ", 68: "SF10-31", 69: "SF10-68", 70: "四季秋",
+            71: "四季春", 72: "スプリングボックス", 73: "sunny islands", 74: "すすきの高原 V1", 75: "スイートコール",
+            76: "シンコペーション", 77: "鉄道唱歌", 78: "鉄腕アトムVerA", 79: "遠い青空V1", 80: "東海道3番",
+            81: "東海道4番", 82: "教会の見える駅", 83: "トゥーランドット", 84: "twilight", 85: "海の駅",
+            86: "美しき丘", 87: "Vamos Ardija", 88: "Verde Rayo", 89: "Verde Rayo V2", 90: "water crown",
+            91: "遊園地のある駅", 92: "夢をかなえてドラえもん", 93: "Zip-A-Dee-Doo-Dah", 94: "常磐2番", 95: "陽だまりv1",
+            96: "陽だまりv2", 97: "お猿のかごやv1", 98: "お猿のかごやv2", 99: "お猿のかごやv3", 100: "お猿のかごやv4",
+            101: "あしたの風A", 102: "あしたの風B", 103: "AIZUその名の情熱", 104: "春待ち風v1", 105: "春待ち風v2",
+            106: "sunrise", 107: "星空の下", 108: "南風の行方", 109: "SF10-43", 110: "SF22-29",
+            111: "突き進め柏", 112: "チュニジア", 113: "Over A", 114: "Over 間奏", 115: "Over サビ",
+            116: "熱き星たちよA", 117: "熱き星たちよB", 118: "シーウインド", 119: "希望の朝", 120: "コーラルリーフ",
+            121: "希望のまち09", 122: "うなりくんなう!", 123: "窓の花飾り", 124: "古都の舞妓さん", 125: "楽々鉄道旅行",
+            126: "くるみあそび", 127: "ナイスガイ!", 128: "トレイントレイン", 129: "SF10-60", 130: "蝶",
+            131: "JR-SH2", 132: "通勤ステップ", 133: "森の妖精", 134: "幸福の銀レール", 135: "JR-SHR1-1",
+            136: "JR-SHR1-3", 137: "JR-SHR2-1", 138: "JR-SHR2-3", 139: "JR-SHR3-1", 140: "JR-SHR3-3",
+            141: "JR-SHR4-1", 142: "JR-SHR4-3", 143: "JR-SHR5-1", 144: "JR-SHR5-3", 145: "JR-SHR6-1",
+            146: "JR-SHR6-3", 147: "JR-SHR7-1", 148: "JR-SHR7-3", 149: "JR-SHR8-1", 150: "JR-SHR8-3",
+            151: "JR-SHR9-1", 152: "JR-SHR9-3", 153: "ビックカメラv5", 154: "ビックカメラv6", 155: "ビックカメラv7",
+            156: "ビックカメラv8", 157: "モンダミン1", 158: "モンダミン2", 159: "公園の手品師", 160: "恋のメキシカンロック",
+            161: "雪解けの小川", 162: "日本庭園", 163: "雑踏のチャイム", 164: "生命の誕生", 165: "JR-SH5-12",
+            166: "雲を友として", 167: "清流", 168: "こころ", 169: "四季愛しき子供達へ", 170: "きらきら星変奏曲",
+            171: "風の贈り物", 172: "HANDS A", 173: "HANDS B", 174: "HANDS C", 175: "上尾市歌A",
+            176: "上尾市歌B", 177: "Keep on Rising", 178: "すすきの高原V2", 179: "浜辺の歌A", 180: "浜辺の歌B",
+            181: "みかん 伊東1", 182: "みかん 伊東2", 183: "みかん 伊東3", 184: "みかん 国府津1", 185: "みかん 国府津2",
+            186: "みかん 国府津3", 187: "みかん 国府津4", 188: "みかん 国府津5", 189: "ロンドKV485", 190: "Humpty Dumpty1",
+            191: "Humpty Dumpty2", 192: "藤沢市民歌B", 193: "藤沢市民歌サビ", 194: "JRE-IKST-021-02", 195: "JRE-IKST-021-01",
+            196: "JRE-IKST-021-05", 197: "JRE-IKST-021-06", 198: "JRE-IKST-013-01", 199: "JRE-IKST-013-02", 200: "JRE-IKST-006-02",
+            201: "JRE-IKST-006-02(重複)", 202: "JRE-IKST-006-01", 203: "JRE-IKST-009-01", 204: "JRE-IKST-009-02", 205: "JRE-IKST-010-02",
+            206: "JRE-IKST-010-01", 207: "JRE-IKST-007-02", 208: "JRE-IKST-007-01", 209: "JRE-IKST-016-01", 210: "JRE-IKST-016-02",
+            211: "JRE-IKST-011-02", 212: "JRE-IKST-011-01", 213: "JRE-IKST-012-01", 214: "JRE-IKST-012-02", 215: "JRE-IKST-015-01",
+            216: "JRE-IKST-015-02", 217: "JRE-IKST-005-01", 218: "JRE-IKST-005-02", 219: "JRE-IKST-003-01", 220: "JRE-IKST-003-02",
+            221: "JRE-IKST-004-02", 222: "JRE-IKST-004-01", 223: "JRE-IKST-001-02", 224: "JRE-IKST-001-01", 225: "JRE-IKST-001-03",
+            226: "JRE-IKST-001-04", 227: "JRE-IKST-002-01", 228: "JRE-IKST-002-02", 229: "JRE-IKST-006-04", 230: "JRE-IKST-006-05",
+            231: "JRE-IKST-007-03", 232: "JRE-IKST-007-05", 233: "JRE-IKST-008-01", 234: "JRE-IKST-008-02", 235: "JRE-IKST-008-03",
+            236: "JRE-IKST-010-03", 237: "JRE-IKST-010-05", 238: "JRE-IKST-014-01", 239: "JRE-IKST-014-02", 240: "JRE-IKST-015-05",
+            241: "JRE-IKST-017-01", 242: "JRE-IKST-017-02", 243: "JRE-IKST-018-01", 244: "JRE-IKST-018-02", 245: "JRE-IKST-019-01",
+            246: "JRE-IKST-019-02", 247: "JRE-IKST-020-01", 248: "JRE-IKST-020-02", 249: "JRE-IKST-021-03", 250: "We love marinos",
+            251: "海辺の散歩", 252: "公園の楓", 253: "花と空", 254: "Esperanza", 255: "緑の車窓",
+            256: "ドリームタイム", 257: "公園通り", 258: "九月の風", 259: "Let It Go", 260: "Let It Go 2024",
+            261: "輝く未来", 262: "SF2", 263: "パシフィック", 264: "SF22-14", 265: "春トレモロ",
+            266: "牧場の朝", 267: "ムーンリバー", 268: "光と風と", 269: "子", 270: "SF22-43",
+            271: "SF10-37", 272: "かえるの合唱", 273: "白鳥の湖", 274: "グリーン・グリーン", 275: "オー・シャンゼリーゼ",
+            276: "バラが咲いた", 277: "ここで君を待ってるよ", 278: "石岡のおまつり", 279: "レットキス・ジェンガ", 280: "幸せなら手をたたこうV1",
+            281: "幸せなら手をたたこうV2", 282: "上を向いて歩こう 友部", 283: "明日があるさ", 284: "寒い朝", 285: "いつでも夢をV1",
+            286: "いつでも夢をV2", 287: "明日は咲こう花咲こう", 288: "若い港", 289: "七つの子", 290: "しゃぼん玉",
+            291: "フラガール~虹を~", 292: "楽興の時", 293: "春の歌", 294: "汽車1", 295: "汽車2",
+            296: "とんぼのめがね", 297: "相馬流れ山", 298: "ff フォルティッシモ", 299: "around the world", 300: "杜の都",
+            301: "青葉城恋唄", 302: "すずめ踊り", 303: "河童音頭", 304: "あびこ市民のうた"
+        };
+        
+        DATA.jreh.items = jrehData;
+        DATA.jres.items = jresData;
+        DATA.jrem.items = jremData;
+
+        /**
+         * IndexedDB Wrapper
+         */
+        const DB = {
+            db: null,
+            async init() {
+                return new Promise((resolve, reject) => {
+                    const req = indexedDB.open("TrainMelodyDB_v2_3", 4);
+                    req.onupgradeneeded = (e) => {
+                        const db = e.target.result;
+                        if (!db.objectStoreNames.contains("folders")) {
+                            db.createObjectStore("folders", { keyPath: "id" });
+                        }
+                    };
+                    req.onsuccess = (e) => { this.db = e.target.result; resolve(); };
+                    req.onerror = reject;
+                });
+            },
+            async getAll() {
+                return new Promise(r => {
+                    const tx = this.db.transaction("folders", "readonly");
+                    tx.objectStore("folders").getAll().onsuccess = (e) => r(e.target.result);
+                });
+            },
+            async save(folder) {
+                return new Promise(r => {
+                    const tx = this.db.transaction("folders", "readwrite");
+                    tx.objectStore("folders").put(folder);
+                    tx.oncomplete = r;
+                });
+            },
+            async delete(id) {
+                return new Promise(r => {
+                    const tx = this.db.transaction("folders", "readwrite");
+                    tx.objectStore("folders").delete(id);
+                    tx.oncomplete = r;
+                });
+            }
+        };
+
+        /**
+         * Application Logic
+         */
+        const app = {
+            state: {
+                folders: [],
+                currentFolderId: null,
+                currentTrackIndex: 0,
+                playingStationId: null, 
+                audio: new Audio(),
+                apiKey: localStorage.getItem("gemini_api_key") || "",
+                mobileMode: localStorage.getItem("mobile_mode") === "true"
+            },
+
+            init: async () => {
+                await DB.init();
+                const folders = await DB.getAll();
+                
+                if (folders.length === 0) {
+                    const def = app.methods.createFolderModel("サンプル: 山手線", "#9acd32");
+                    def.tracks[0] = [
+                        { id: 1, name: "東京", melodyId: "33", melodyType: "jrem", customPath:"", approachId: "1", announceId: "4" }, 
+                        { id: 2, name: "有楽町", melodyId: "34", melodyType: "jrem", customPath:"", approachId: "1", announceId: "4" }
+                    ];
+                    def.tracks[1] = [
+                         { id: 3, name: "有楽町", melodyId: "34", melodyType: "jrem", customPath:"", approachId: "1", announceId: "5" },
+                         { id: 4, name: "東京", melodyId: "33", melodyType: "jrem", customPath:"", approachId: "1", announceId: "5" }
+                    ];
+                    await DB.save(def);
+                    app.state.folders = [def];
+                } else {
+                    app.state.folders = folders.map(f => {
+                        if(!f.tracks) {
+                            f.tracks = [];
+                            if(f.stationsA) f.tracks[0] = f.stationsA;
+                            if(f.stationsB) f.tracks[1] = f.stationsB;
+                            delete f.stationsA;
+                            delete f.stationsB;
+                        }
+                        if(!f.defaultIkst) f.defaultIkst = "001"; 
+                        if(!f.maxTracks) f.maxTracks = Math.max(2, f.tracks.length);
+                        for(let i=0; i<f.maxTracks; i++) {
+                            if(!f.tracks[i]) f.tracks[i] = [];
+                        }
+                        return f;
+                    });
+                }
+
+                document.getElementById('api-key-input').value = app.state.apiKey;
+                document.getElementById('mobile-mode-check').checked = app.state.mobileMode;
+                app.ui.toggleMobileMode(app.state.mobileMode);
+                app.ui.renderFolderList();
+                
+                if(app.state.folders.length > 0) {
+                    app.methods.selectFolder(app.state.folders[0].id);
+                }
+
+                // Add color input listener
+                document.getElementById('new-folder-color').addEventListener('input', (e) => {
+                    document.getElementById('new-folder-color-text').value = e.target.value;
+                });
+            },
+
+            methods: {
+                createFolderModel(name, color = "#cccccc", ikst="001") {
+                    return {
+                        id: crypto.randomUUID(),
+                        name: name,
+                        color: color,
+                        defaultIkst: ikst, 
+                        maxTracks: 2,      
+                        tracks: [[], []]   
+                    };
+                },
+
+                createStationModel(name = "新しい駅", melody = "1", type = "jrem") {
+                    return {
+                        id: crypto.randomUUID(),
+                        name: name,
+                        melodyId: melody,
+                        melodyType: type, // 'jrem' or 'custom'
+                        customPath: type === 'custom' ? melody : "",
+                        approachId: "1",
+                        announceId: "4"
+                    };
+                },
+
+                selectFolder(id) {
+                    app.state.currentFolderId = id;
+                    app.state.currentTrackIndex = 0;
+                    if(app.state.mobileMode) {
+                        document.body.classList.remove('show-sidebar');
+                    }
+                    app.ui.renderFolderList();
+                    app.ui.renderMainView();
+                },
+
+                getCurrentFolder() {
+                    return app.state.folders.find(f => f.id === app.state.currentFolderId);
+                },
+
+                getCurrentStations() {
+                    const f = app.methods.getCurrentFolder();
+                    if(!f || !f.tracks) return [];
+                    return f.tracks[app.state.currentTrackIndex] || [];
+                },
+
+                async deleteFolder(id) {
+                    if(!confirm("この路線を削除してもよろしいですか？\n(復元できません)")) return;
+                    
+                    app.state.folders = app.state.folders.filter(f => f.id !== id);
+                    await DB.delete(id);
+                    
+                    if(app.state.currentFolderId === id) {
+                        if (app.state.folders.length > 0) {
+                            app.methods.selectFolder(app.state.folders[0].id);
+                        } else {
+                            app.state.currentFolderId = null;
+                            document.getElementById('station-container').innerHTML = "";
+                            document.getElementById('track-switcher').innerHTML = "";
+                            document.getElementById('current-folder-name').innerText = "路線未選択";
+                        }
+                    } else {
+                        app.ui.renderFolderList();
+                    }
+                },
+
+                async save() {
+                    const f = app.methods.getCurrentFolder();
+                    if(f) await DB.save(JSON.parse(JSON.stringify(f)));
+                },
+
+                // Audio Logic with Fallback
+                playMelody(stationId) {
+                    const f = app.methods.getCurrentFolder();
+                    const list = f.tracks[app.state.currentTrackIndex];
+                    const s = list.find(st => st.id == stationId);
+                    if(!s) return;
+
+                    let path = "";
+                    if(s.melodyType === 'custom' && s.customPath) {
+                        path = `./mysound/${s.customPath}.ogg`; 
+                    } else {
+                        path = `./jrem/${s.melodyId}.ogg`;
+                    }
+
+                    const playWithFallback = (srcPath, attemptLevel) => {
+                        app.state.audio.src = srcPath;
+                        app.state.audio.loop = true;
+                        
+                        const errHandler = (e) => {
+                            console.log(`Failed to load: ${srcPath}, Attempt: ${attemptLevel}`);
+                            if (attemptLevel === 1) {
+                                let nextPath = "";
+                                if(s.melodyType === 'custom') {
+                                    playWithFallback("", 3); 
+                                } else {
+                                    nextPath = `./mysound/${s.melodyId}.ogg`; 
+                                    playWithFallback(nextPath, 2);
+                                }
+                            } else if (attemptLevel === 2) {
+                                const suffix = f.defaultIkst;
+                                playWithFallback(`./jrem/JRE-IKST-${suffix}.ogg`, 3);
+                            } else {
+                                alert(`再生エラー: 音声ファイルが見つかりません。\nバックアップ(IKST-${f.defaultIkst})も再生不可でした。`);
+                                app.ui.setSwitchState(stationId, false);
+                            }
+                        };
+                        
+                        app.state.audio.onerror = errHandler;
+                        app.state.audio.play().catch(e => console.error(e));
+                    };
+
+                    playWithFallback(path, 1);
+                    app.state.playingStationId = stationId;
+                    app.ui.setSwitchState(stationId, true);
+                },
+
+                stopMelodyAndAnnounce(stationId) {
+                    app.state.audio.pause();
+                    app.state.audio.loop = false;
+                    app.state.audio.onerror = null;
+                    app.state.playingStationId = null;
+                    app.ui.setSwitchState(stationId, false);
+
+                    const f = app.methods.getCurrentFolder();
+                    const list = f.tracks[app.state.currentTrackIndex];
+                    const s = list.find(st => st.id == stationId);
+                    
+                    if(s && s.announceId) {
+                         const path = `./jreh/${s.announceId}.ogg`;
+                         const annAudio = new Audio(path);
+                         annAudio.play().catch(e => console.log("Announce file not found", path));
+                    }
+                },
+                
+                playOneShot(type, id) {
+                    if(!id) return;
+                    const path = `./${type}/${id}.ogg`;
+                    const tmp = new Audio(path);
+                    tmp.play();
+                }
+            },
+
+            handlers: {
+                // Modified: Now opens modal
+                createFolderFromModal: async () => {
+                    const name = document.getElementById('new-folder-name').value;
+                    const color = document.getElementById('new-folder-color').value;
+                    const ikst = document.getElementById('new-folder-ikst').value;
+
+                    if(!name) return alert("路線名を入力してください");
+
+                    const f = app.methods.createFolderModel(name, color, ikst);
+                    app.state.folders.push(f);
+                    await DB.save(f);
+                    app.methods.selectFolder(f.id);
+                    document.getElementById('new-folder-modal').classList.add('hidden');
+                    
+                    // Clear inputs
+                    document.getElementById('new-folder-name').value = "";
+                },
+
+                switchTrack: (index) => {
+                    app.state.currentTrackIndex = index;
+                    app.ui.renderMainView();
+                },
+
+                toggleSwitch: (stationId) => {
+                    if (app.state.playingStationId === stationId) {
+                        app.methods.stopMelodyAndAnnounce(stationId);
+                    } else {
+                        if(app.state.playingStationId) {
+                            app.state.audio.pause();
+                            app.ui.setSwitchState(app.state.playingStationId, false);
+                        }
+                        app.methods.playMelody(stationId);
+                    }
+                },
+
+                addStation: async () => {
+                    const f = app.methods.getCurrentFolder();
+                    if(!f) return;
+                    const s = app.methods.createStationModel();
+                    if(!f.tracks[app.state.currentTrackIndex]) f.tracks[app.state.currentTrackIndex] = [];
+                    f.tracks[app.state.currentTrackIndex].push(s);
+                    await app.methods.save();
+                    app.ui.renderStations();
+                },
+
+                updateStation: async (id, key, value) => {
+                    const stations = app.methods.getCurrentStations();
+                    const s = stations.find(st => st.id == id);
+                    if(s) {
+                        s[key] = value;
+                        await app.methods.save();
+                        if(key === 'melodyType') app.ui.renderStations(); 
+                    }
+                },
+                
+                deleteStation: async (id) => {
+                    if(!confirm("駅を削除しますか？")) return;
+                    const f = app.methods.getCurrentFolder();
+                    f.tracks[app.state.currentTrackIndex] = f.tracks[app.state.currentTrackIndex].filter(s => s.id != id);
+                    await app.methods.save();
+                    app.ui.renderStations();
+                },
+
+                generateLineByAI: async () => {
+                    const lineName = document.getElementById('ai-line-input').value;
+                    const apiKey = app.state.apiKey;
+                    if(!lineName || !apiKey) return alert("APIキーまたは路線名が入力されていません。設定からキーを入力してください。");
+                    
+                    document.getElementById('ai-loading').classList.remove('hidden');
+
+                    const prompt = `
+                        路線名「${lineName}」の駅リストと発車メロディを推定しJSONで返してください。
+                        フォーマット:
+                        {
+                            "lineName": "路線名",
+                            "color": "#カラーコード",
+                            "tracks": [
+                                [ {"name": "駅名", "melody": "曲名"} ], 
+                                [ {"name": "駅名", "melody": "曲名"} ]
+                            ]
+                        }
+                    `;
+
+                    try {
+                        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
+                            method: "POST", headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+                        });
+                        const json = await res.json();
+                        const text = json.candidates[0].content.parts[0].text;
+                        const data = JSON.parse(text.match(/\{[\s\S]*\}/)[0]);
+
+                        const f = app.methods.createFolderModel(data.lineName, data.color || "#999");
+                        f.maxTracks = Math.max(2, data.tracks.length);
+                        
+                        const resolveMelody = (name) => {
+                            const entry = Object.entries(DATA.jrem.items).find(([k,v]) => v.includes(name) || name.includes(v));
+                            return entry ? entry[0] : "1";
+                        };
+
+                        const mapStation = (s) => {
+                            return app.methods.createStationModel(s.name, resolveMelody(s.melody), "jrem");
+                        };
+
+                        f.tracks = data.tracks.map(trackList => trackList.map(mapStation));
+                        for(let i=0; i<f.maxTracks; i++) {
+                            if(!f.tracks[i]) f.tracks[i] = [];
+                        }
+
+                        app.state.folders.push(f);
+                        await DB.save(f);
+                        app.methods.selectFolder(f.id);
+                        document.getElementById('ai-modal').classList.add('hidden');
+
+                    } catch(e) {
+                        alert("AI生成エラー: " + e.message);
+                        console.error(e);
+                    } finally {
+                        document.getElementById('ai-loading').classList.add('hidden');
+                    }
+                }
+            },
+
+            io: {
+                showImportExport: () => {
+                    const f = app.methods.getCurrentFolder();
+                    if(!f) return alert("路線が選択されていません");
+                    
+                    document.getElementById('io-modal').classList.remove('hidden');
+                    // Automatically generate text when opening
+                    const txt = app.io.generateText(f);
+                    document.getElementById('io-textarea').value = txt;
+                },
+
+                copyToClipboard: () => {
+                    const area = document.getElementById('io-textarea');
+                    area.select();
+                    document.execCommand('copy');
+                    alert("コピーしました");
+                },
+
+                generateText: (f) => {
+                     let txt = `Line?=${f.name}\nLineColor?=${f.color}\nThisLineIKST→JRE-IKST-=${f.defaultIkst}\nMaximumtrack=${f.maxTracks}\n`;
+                    
+                    for(let i=0; i<f.maxTracks; i++) {
+                        txt += `-${i+1}.line-\n`;
+                        const track = f.tracks[i] || [];
+                        track.forEach(s => {
+                            let mName = s.melodyType === 'custom' ? s.customPath : (DATA.jrem.items[s.melodyId] || s.melodyId);
+                            txt += `${s.name}=${mName}\n`;
+                        });
+                    }
+                    return txt;
+                },
+
+                parseText: (txt) => {
+                    const lines = txt.split(/\r?\n/);
+                    let folder = app.methods.createFolderModel("インポート路線");
+                    let currentTrack = 0; 
+                    
+                    lines.forEach(line => {
+                         line = line.trim();
+                         if(line.startsWith("Line?=")) folder.name = line.split("=")[1];
+                         else if(line.startsWith("LineColor?=")) folder.color = line.split("=")[1];
+                         else if(line.startsWith("ThisLineIKST→JRE-IKST-=")) folder.defaultIkst = line.split("=")[1];
+                         else if(line.startsWith("Maximumtrack=")) folder.maxTracks = parseInt(line.split("=")[1]) || 2;
+                    });
+                    
+                    for(let i=0; i<folder.maxTracks; i++) folder.tracks[i] = [];
+
+                    const nameToId = {};
+                    Object.entries(DATA.jrem.items).forEach(([k,v]) => nameToId[v] = k);
+
+                    for (let line of lines) {
+                        line = line.trim();
+                        if(!line) continue;
+                        
+                        const headerMatch = line.match(/^-(\d+)\.line-$/);
+                        if(headerMatch) {
+                            currentTrack = parseInt(headerMatch[1]) - 1;
+                            if(currentTrack < 0) currentTrack = 0;
+                            continue;
+                        }
+
+                        if(line.includes("=") && !line.startsWith("Line") && !line.startsWith("Maximum") && !line.startsWith("ThisLine")) {
+                            const idx = line.indexOf("=");
+                            const stName = line.substring(0, idx);
+                            const melName = line.substring(idx + 1);
+
+                            let mId = "1";
+                            let mType = "jrem";
+                            
+                            if(nameToId[melName]) {
+                                mId = nameToId[melName];
+                            } else if (DATA.jrem.items[melName]) {
+                                mId = melName;
+                            } else {
+                                mType = "custom";
+                                mId = melName;
+                            }
+                            
+                            const s = app.methods.createStationModel(stName, mId, mType);
+                            if(!folder.tracks[currentTrack]) folder.tracks[currentTrack] = [];
+                            folder.tracks[currentTrack].push(s);
+                        }
+                    }
+                    return folder;
+                },
+
+                importLineFromText: async () => {
+                    const txt = document.getElementById('io-textarea').value;
+                    if(!txt) return;
+                    const folder = app.io.parseText(txt);
+                    app.state.folders.push(folder);
+                    await DB.save(folder);
+                    app.methods.selectFolder(folder.id);
+                    document.getElementById('io-modal').classList.add('hidden');
+                },
+
+                importSingleFile: (input) => {
+                    const file = input.files[0];
+                    if(!file) return;
+                    const reader = new FileReader();
+                    reader.onload = async (e) => {
+                        const txt = e.target.result;
+                        const folder = app.io.parseText(txt);
+                        app.state.folders.push(folder);
+                        await DB.save(folder);
+                        app.methods.selectFolder(folder.id);
+                        alert(`路線「${folder.name}」をインポートしました`);
+                    };
+                    reader.readAsText(file);
+                    input.value = ""; 
+                },
+
+                exportAllZip: async () => {
+                    const zip = new JSZip();
+                    app.state.folders.forEach(f => {
+                        const txt = app.io.generateText(f);
+                        const fname = f.name.replace(/[\\/:*?"<>|]/g, "_") + ".txt";
+                        zip.file(fname, txt);
+                    });
+
+                    const content = await zip.generateAsync({type:"blob"});
+                    const url = URL.createObjectURL(content);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = "SoundSwitcher_Backup.zip";
+                    a.click();
+                    URL.revokeObjectURL(url);
+                },
+
+                importAllZip: async (input) => {
+                    const file = input.files[0];
+                    if(!file) return;
+                    try {
+                        const zip = await JSZip.loadAsync(file);
+                        let count = 0;
+                        const promises = [];
+                        zip.forEach((relativePath, zipEntry) => {
+                            if(!zipEntry.dir && zipEntry.name.endsWith(".txt")) {
+                                promises.push(zipEntry.async("string").then(async (content) => {
+                                    const folder = app.io.parseText(content);
+                                    app.state.folders.push(folder);
+                                    await DB.save(folder);
+                                    count++;
+                                }));
+                            }
+                        });
+                        await Promise.all(promises);
+                        app.ui.renderFolderList();
+                        alert(`${count}件の路線を復元しました`);
+                    } catch(e) {
+                        alert("Zipエラー: " + e.message);
+                    }
+                    input.value = "";
+                }
+            },
+
+            ui: {
+                toggleSettings: () => document.getElementById('settings-modal').classList.toggle('hidden'),
+                saveSettings: () => {
+                    app.state.apiKey = document.getElementById('api-key-input').value;
+                    localStorage.setItem("gemini_api_key", app.state.apiKey);
+                    document.getElementById('settings-modal').classList.add('hidden');
+                },
+                showAiModal: () => document.getElementById('ai-modal').classList.remove('hidden'),
+                showNewFolderModal: () => document.getElementById('new-folder-modal').classList.remove('hidden'),
+                
+                toggleMobileMode: (isMobile) => {
+                    app.state.mobileMode = isMobile;
+                    localStorage.setItem("mobile_mode", isMobile);
+                    if(isMobile) {
+                        document.body.classList.add('mobile-mode');
+                        document.body.classList.add('show-sidebar');
+                    } else {
+                        document.body.classList.remove('mobile-mode', 'show-sidebar');
+                    }
+                    app.ui.renderFolderList();
+                },
+
+                toggleSidebar: () => {
+                    document.body.classList.toggle('show-sidebar');
+                },
+
+                renderFolderList: () => {
+                    const list = document.getElementById('folder-list');
+                    list.innerHTML = app.state.folders.map(f => `
+                        <div class="group relative flex items-center p-1 mb-1 rounded-lg transition border-l-4 
+                             ${f.id === app.state.currentFolderId ? 'bg-[#2a2a2a] border-green-500 shadow-md' : 'border-transparent hover:bg-[#222]'}">
+                            
+                            <div onclick="app.methods.selectFolder('${f.id}')" class="flex-1 cursor-pointer flex items-center p-2 overflow-hidden">
+                                <span class="font-bold truncate text-sm ${f.id === app.state.currentFolderId ? 'text-white' : 'text-gray-400 group-hover:text-gray-200'}">
+                                    <i class="fas fa-circle text-[10px] mr-2" style="color:${f.color}"></i>${f.name}
+                                </span>
+                            </div>
+                            
+                            <button onclick="event.stopPropagation(); app.methods.deleteFolder('${f.id}')" class="p-2 text-gray-600 hover:text-red-500 transition opacity-0 group-hover:opacity-100 focus:opacity-100" title="削除">
+                                <i class="fas fa-trash-alt text-xs"></i>
+                            </button>
+                        </div>
+                    `).join('');
+                },
+
+                renderMainView: () => {
+                    const f = app.methods.getCurrentFolder();
+                    if(!f) return;
+
+                    document.getElementById('current-folder-name').innerText = f.name;
+                    document.getElementById('line-color-indicator').style.backgroundColor = f.color;
+                    document.getElementById('line-color-indicator').style.boxShadow = `0 0 10px ${f.color}`;
+                    
+                    const tabContainer = document.getElementById('track-switcher');
+                    tabContainer.classList.remove('hidden');
+                    
+                    let tabsHtml = '';
+                    for(let i=0; i<f.maxTracks; i++) {
+                        const isActive = i === app.state.currentTrackIndex;
+                        const colorStyle = isActive ? `color:${f.color}` : '';
+                        const bgStyle = isActive ? 'bg-[#222] text-white' : 'text-gray-500 hover:text-gray-300';
+                        tabsHtml += `
+                            <button onclick="app.handlers.switchTrack(${i})" 
+                                    class="line-tab flex-1 py-3 px-4 min-w-[80px] text-center transition-all cursor-pointer ${bgStyle}"
+                                    style="${colorStyle}">
+                                <span>${i+1}番線</span>
+                            </button>
+                            ${i < f.maxTracks-1 ? '<div class="w-px bg-[#333] my-2 shrink-0"></div>' : ''}
+                        `;
+                    }
+                    tabContainer.innerHTML = tabsHtml;
+
+                    app.ui.renderStations();
+                },
+
+                renderStations: () => {
+                    const stations = app.methods.getCurrentStations();
+                    const container = document.getElementById('station-container');
+
+                    document.getElementById('add-station-btn-area').classList.remove('hidden');
+
+                    if(!stations || stations.length === 0) {
+                        container.innerHTML = `<div class="text-center text-gray-600 py-10">駅が登録されていません</div>`;
+                        return;
+                    }
+
+                    container.innerHTML = stations.map((s, idx) => {
+                        const genOpts = (items, selected) => Object.entries(items).map(([k,v]) => `<option value="${k}" ${String(k)===String(selected)?'selected':''}>${k}: ${v}</option>`).join('');
+                        
+                        const isCustom = s.melodyType === 'custom';
+                        const melodySelectorHtml = isCustom 
+                            ? `<div class="flex items-center gap-1">
+                                 <span class="text-xs text-green-500 font-mono">/mysound/</span>
+                                 <input type="text" value="${s.customPath}" placeholder="filename" 
+                                   onchange="app.handlers.updateStation('${s.id}', 'customPath', this.value)" 
+                                   class="bg-[#000] text-green-400 w-full text-xs p-1.5 border border-green-800 rounded focus:border-green-500 focus:outline-none placeholder-gray-700">
+                                 <span class="text-xs text-green-500 font-mono">.ogg</span>
+                               </div>`
+                            : `<select onchange="app.handlers.updateStation('${s.id}', 'melodyId', this.value)" 
+                                class="bg-[#111] text-gray-300 w-full text-xs p-1.5 border border-[#444] rounded focus:border-blue-500 focus:outline-none">
+                                ${genOpts(DATA.jrem.items, s.melodyId)}
+                               </select>`;
+
+                        return `
+                        <div class="glass-panel p-3 md:p-4 rounded-xl flex flex-col gap-3 relative animate-fade-in group hover:border-gray-600 transition">
+                            <div class="flex items-center gap-3 border-b border-gray-700/50 pb-2">
+                                <span class="bg-gray-800 text-xs px-2 py-1 rounded text-gray-400 font-mono border border-gray-700 min-w-[24px] text-center">${idx+1}</span>
+                                <input type="text" value="${s.name}" 
+                                       onchange="app.handlers.updateStation('${s.id}', 'name', this.value)"
+                                       class="bg-transparent text-lg md:text-xl font-bold text-white w-full focus:outline-none focus:border-b focus:border-green-500 placeholder-gray-600" placeholder="駅名を入力">
+                                <button onclick="app.handlers.deleteStation('${s.id}')" class="text-gray-600 hover:text-red-500 p-2 transition opacity-0 group-hover:opacity-100"><i class="fas fa-trash"></i></button>
+                            </div>
+
+                            <div class="flex gap-4 items-stretch">
+                                <button id="switch-${s.id}" onclick="app.handlers.toggleSwitch('${s.id}')" 
+                                    class="switch-btn flex-none w-20 md:w-24 rounded-xl flex flex-col items-center justify-center gap-1 group/btn">
+                                    <div class="switch-led" id="led-${s.id}"></div>
+                                    <span class="text-xs font-bold text-gray-400 mt-1 transition-colors group-hover/btn:text-white">発車</span>
+                                    <span class="text-[9px] text-gray-600 font-mono tracking-widest">ON/OFF</span>
+                                </button>
+
+                                <div class="flex-1 grid grid-cols-1 md:grid-cols-2 gap-2">
+                                    <div class="bg-[#1a1a1a] p-2 rounded-lg border border-[#333]">
+                                        <div class="flex justify-between items-center text-[10px] text-gray-500 mb-1.5 px-1">
+                                            <span class="font-bold tracking-wider">DEPARTURE MELODY</span>
+                                            <label class="cursor-pointer text-blue-400 hover:text-blue-300 flex items-center gap-1 transition">
+                                                <input type="checkbox" ${isCustom?'checked':''} 
+                                                onchange="app.handlers.updateStation('${s.id}', 'melodyType', this.checked ? 'custom' : 'jrem')" class="accent-blue-500 w-3 h-3"> Custom
+                                            </label>
+                                        </div>
+                                        ${melodySelectorHtml}
+                                    </div>
+                                    
+                                    <div class="bg-[#1a1a1a] p-2 rounded-lg border border-[#333] flex flex-col justify-between gap-2">
+                                        <div class="flex items-center gap-2">
+                                            <button onclick="app.methods.playOneShot('jres', '${s.approachId}')" class="bg-orange-900/20 text-orange-500 hover:text-orange-400 text-xs hover:bg-orange-900/40 p-1.5 rounded transition border border-orange-900/30 flex items-center gap-1 w-16 justify-center">
+                                                <i class="fas fa-volume-up"></i> 接近
+                                            </button>
+                                            <select onchange="app.handlers.updateStation('${s.id}', 'approachId', this.value)" class="bg-[#111] text-xs text-gray-400 flex-1 border border-[#333] rounded p-1 focus:border-orange-500 focus:outline-none">
+                                                 ${genOpts(DATA.jres.items, s.approachId)}
+                                            </select>
+                                        </div>
+                                        <div class="flex items-center gap-2">
+                                            <button onclick="app.methods.playOneShot('jreh', '${s.announceId}')" class="bg-yellow-900/20 text-yellow-500 hover:text-yellow-400 text-xs hover:bg-yellow-900/40 p-1.5 rounded transition border border-yellow-900/30 flex items-center gap-1 w-16 justify-center">
+                                                <i class="fas fa-door-closed"></i> 戸閉
+                                            </button>
+                                            <select onchange="app.handlers.updateStation('${s.id}', 'announceId', this.value)" class="bg-[#111] text-xs text-gray-400 flex-1 border border-[#333] rounded p-1 focus:border-yellow-500 focus:outline-none">
+                                                 ${genOpts(DATA.jreh.items, s.announceId)}
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        `;
+                    }).join('');
+                },
+
+                setSwitchState: (id, isOn) => {
+                    const btn = document.getElementById(`switch-${id}`);
+                    if(!btn) return;
+                    
+                    if(isOn) {
+                        btn.classList.add('active');
+                        btn.querySelector('span').classList.remove('text-gray-400');
+                        btn.querySelector('span').classList.add('text-green-400');
+                    } else {
+                        btn.classList.remove('active');
+                        btn.querySelector('span').classList.add('text-gray-400');
+                        btn.querySelector('span').classList.remove('text-green-400');
+                    }
+                }
+            }
+        };
+
+        window.addEventListener('DOMContentLoaded', app.init);
+    </script>
+</body>
+</html>
+
+
